@@ -2,6 +2,7 @@ import openai
 import json
 import numpy as np
 import random
+import os
 
 def construct_message(agents, question, idx):
     if len(agents) == 0:
@@ -24,47 +25,57 @@ def construct_assistant_message(completion):
     return {"role": "assistant", "content": content}
 
 
-def read_jsonl(path: str):
-    with open(path) as fh:
-        return [json.loads(line) for line in fh.readlines() if line]
+def read_jsonl(path: str):  
+    with open(path) as fh:  
+        return [json.loads(line) for line in fh.readlines() if line]  
 
-if __name__ == "__main__":
-    agents = 3
-    rounds = 2
-    random.seed(0)
+if __name__ == "__main__":   
+    #agents = 3     
+    #rounds = 3     
+    num_tests = 50       
+    
+    openai.api_key = os.environ.get("OPENAI_API_KEY")  
+    questions = read_jsonl("data/gsm8k/gsm8k_data.jsonl")  
+    for seed_num in range(11,21):
+        random.seed(seed_num)
+        random.shuffle(questions)
+        generated_description = {}
+        for agents in range(5,6):
+            for rounds in range(3,4): 
+                ques_num = 1
+                for data in questions[:num_tests]:  
+                    
+                    question = data['question']
+                    answer = data['answer']
 
-    generated_description = {}
+                    agent_contexts = [[{"role": "user", "content": """Can you solve the following math problem? {} Explain your reasoning. Your final answer should be a single numerical number, in the form \\boxed{{answer}}, at the end of your response. """.format(question)}] for agent in range(agents)]
 
-    questions = read_jsonl("/data/vision/billf/scratch/yilundu/llm_iterative_debate/grade-school-math/grade_school_math/data/test.jsonl")
-    random.shuffle(questions)
 
-    for data in questions[:100]:
-        question = data['question']
-        answer = data['answer']
+                    for round in range(rounds):
+                        for i, agent_context in enumerate(agent_contexts):
 
-        agent_contexts = [[{"role": "user", "content": """Can you solve the following math problem? {} Explain your reasoning. Your final answer should be a single numerical number, in the form \\boxed{{answer}}, at the end of your response. """.format(question)}] for agent in range(agents)]
+                            if round != 0:
+                                agent_contexts_other = agent_contexts[:i] + agent_contexts[i+1:]
+                                message = construct_message(agent_contexts_other, question, 2*round - 1)
+                                agent_context.append(message)
 
-        for round in range(rounds):
-            for i, agent_context in enumerate(agent_contexts):
+                            completion = openai.ChatCompletion.create(
+                                    model="gpt-3.5-turbo",
+                                    messages=agent_context,
+                                    n=1)
 
-                if round != 0:
-                    agent_contexts_other = agent_contexts[:i] + agent_contexts[i+1:]
-                    message = construct_message(agent_contexts_other, question, 2*round - 1)
-                    agent_context.append(message)
 
-                completion = openai.ChatCompletion.create(
-                          model="gpt-3.5-turbo-0301",
-                          messages=agent_context,
-                          n=1)
+                            assistant_message = construct_assistant_message(completion)
+                            agent_context.append(assistant_message)
 
-                assistant_message = construct_assistant_message(completion)
-                agent_context.append(assistant_message)
+                        print("round {} Done!".format(round))
+                    
+                    
+                    generated_description[question] = (agent_contexts, answer)
+                    
+                    print("question {} of Test set {} Complete! \n".format(ques_num,seed_num-10))
+                    ques_num += 1
 
-        generated_description[question] = (agent_contexts, answer)
+                json.dump(generated_description, open("output/gsm/turbo/gsm_agent_{}_round_{}_test_{}_turbo_{}.json".format(agents, rounds,num_tests,seed_num-10), "w"))
 
-    json.dump(generated_description, open("gsm_{}_{}.json".format(agents, rounds), "w"))
 
-    import pdb
-    pdb.set_trace()
-    print(answer)
-    print(agent_context)
